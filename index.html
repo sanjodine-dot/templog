@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Sanjo Temp Log</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: one narrow clipboard column — sticky check picker (cold checks twice a day, hot holding every 2 h), equipment grouped by station, save bar pinned at the bottom. */
+:root{
+  --bg:#f3f5f6; --surface:#ffffff; --fg:#16201f; --muted:#5d6b6a; --line:#d9e0e0;
+  --accent:#0f6b63; --accent-ink:#ffffff; --accent-soft:#e1f0ee;
+  --cold:#2f6fa8; --hot:#b4532a; --bad:#c0262d; --bad-soft:#fde8e8; --ok:#1d7a46; --ok-soft:#e3f4ea; --warn:#9a6a00; --warn-soft:#fbf1d8;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-num:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --r:10px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0f1515; --surface:#172020; --fg:#e6eeed; --muted:#93a3a1; --line:#2a3736;
+  --accent:#3fb3a7; --accent-ink:#06201d; --accent-soft:#163331;
+  --cold:#7fb2e3; --hot:#e59267; --bad:#ff6b6f; --bad-soft:#3a1a1c; --ok:#5fd08f; --ok-soft:#153024; --warn:#e2b54a; --warn-soft:#33290f;
+  color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f1515; --surface:#172020; --fg:#e6eeed; --muted:#93a3a1; --line:#2a3736;
+  --accent:#3fb3a7; --accent-ink:#06201d; --accent-soft:#163331;
+  --cold:#7fb2e3; --hot:#e59267; --bad:#ff6b6f; --bad-soft:#3a1a1c; --ok:#5fd08f; --ok-soft:#153024; --warn:#e2b54a; --warn-soft:#33290f;
+  color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:15px;line-height:1.45;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 150px}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--bg)}
+.wrap{max-width:640px;margin:0 auto}
+header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);padding-block:14px 10px;border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.brand h1{margin:0;font-size:19px;font-weight:700;letter-spacing:.01em}
+.brand .date{font-family:var(--f-num);font-size:13px;color:var(--muted)}
+.tabs{display:flex;gap:6px;margin-top:10px}
+.tabs a{flex:1;text-align:center;padding:8px 10px;border-radius:8px;text-decoration:none;color:var(--muted);font-weight:600;border:1px solid var(--line);background:var(--surface)}
+.tabs a[aria-current="page"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.slotgroups{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.sg{display:grid;grid-template-columns:64px 1fr;gap:8px;align-items:center}
+.sg > span{font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase}
+.sg.cold > span{color:var(--cold)} .sg.hot > span{color:var(--hot)}
+.sg .btns{display:grid;gap:5px;grid-template-columns:repeat(var(--n),1fr)}
+.slot{appearance:none;border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:8px;padding:6px 2px;font:inherit;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:1px;min-width:0}
+.slot b{font-family:var(--f-num);font-size:13.5px;white-space:nowrap}
+.slot small{font-size:10.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.slot.sel{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent);background:var(--accent-soft)}
+.slot.done small{color:var(--ok);font-weight:600}
+.slot.missed small{color:var(--bad);font-weight:600}
+.slot:focus-visible,.tabs a:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.banner{margin-top:14px;padding:10px 12px;border-radius:var(--r);font-size:13.5px;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
+.banner.ok{background:var(--ok-soft);border-color:transparent;color:var(--ok)}
+.banner.bad{background:var(--bad-soft);border-color:transparent;color:var(--bad)}
+.banner.warn{background:var(--warn-soft);border-color:transparent;color:var(--warn)}
+h2.station{margin:22px 0 8px;font-size:12px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.list{display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.row{display:grid;grid-template-columns:1fr auto;gap:6px 12px;padding:11px 12px;border-top:1px solid var(--line);align-items:center}
+.row:first-child{border-top:0}
+.row .name{min-width:0}
+.row .name b{display:block;font-weight:600;font-size:15px}
+.row .name small{color:var(--muted);font-size:12.5px}
+.kind{display:inline-block;font-size:11px;font-weight:600;padding:1px 6px;border-radius:99px;margin-right:4px;vertical-align:1px}
+.kind.cold{color:var(--cold);background:color-mix(in srgb,var(--cold) 14%,transparent)}
+.kind.freeze{color:var(--cold);background:color-mix(in srgb,var(--cold) 22%,transparent)}
+.kind.hot{color:var(--hot);background:color-mix(in srgb,var(--hot) 16%,transparent)}
+.kind.dish{color:var(--muted);background:color-mix(in srgb,var(--muted) 14%,transparent)}
+.entry{display:flex;align-items:center;gap:6px}
+.entry input{width:78px;font-family:var(--f-num);font-size:18px;font-weight:600;text-align:right;padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg)}
+.entry .unit{appearance:none;border:1px solid var(--line);background:var(--surface);color:var(--muted);border-radius:8px;padding:8px 7px;font-family:var(--f-num);font-size:13px;cursor:pointer;min-width:42px}
+.row.bad{background:var(--bad-soft)}
+.row.bad .entry input{border-color:var(--bad);color:var(--bad)}
+.row.good .entry input{border-color:color-mix(in srgb,var(--ok) 55%,var(--line))}
+.conv{grid-column:1/-1;font-family:var(--f-num);font-size:12px;color:var(--muted);margin-top:-2px}
+.row.bad .conv{color:var(--bad);font-weight:600}
+.fix{grid-column:1/-1}
+.fix label{display:block;font-size:12.5px;font-weight:600;color:var(--bad);margin-bottom:4px}
+.fix input{width:100%;padding:8px 10px;border:1px solid var(--bad);border-radius:8px;background:var(--surface);color:var(--fg);font:inherit;font-size:14px}
+.check{display:flex;gap:10px;align-items:flex-start;padding:12px;cursor:pointer}
+.check input{width:22px;height:22px;accent-color:var(--accent);margin:1px 0 0;flex:none}
+.check small{display:block;color:var(--muted);font-size:12.5px}
+.savebar{position:fixed;left:0;right:0;bottom:0;z-index:6;background:var(--surface);border-top:1px solid var(--line);
+  padding:10px max(16px,env(safe-area-inset-right,0px)) calc(10px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+.savebar .in{max-width:640px;margin:0 auto;display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center}
+.savebar input{width:84px;padding:11px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font-family:var(--f-num);font-size:16px;font-weight:600;text-transform:uppercase;text-align:center}
+.savebar .msg{flex:1 1 100%;order:-1;min-width:0;font-size:12.5px;color:var(--muted)}
+.savebar .btn{flex:1}
+.btn{appearance:none;border:0;border-radius:9px;padding:12px 18px;font:inherit;font-weight:700;font-size:15px;cursor:pointer;background:var(--accent);color:var(--accent-ink)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.ghost{background:var(--surface);color:var(--fg);border:1px solid var(--line);font-weight:600;padding:8px 12px;font-size:14px}
+/* history */
+.hnav{display:flex;gap:8px;align-items:center;margin-top:16px;flex-wrap:wrap}
+.hnav input[type=date]{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--fg);font-family:var(--f-num);font-size:14px}
+.week{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-top:12px}
+.day{appearance:none;border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:8px;padding:6px 2px;font:inherit;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:0}
+.day small{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.day b{font-family:var(--f-num);font-size:14px}
+.day.sel{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.day:disabled{opacity:.4;cursor:default}
+.dots{display:flex;gap:2px;flex-wrap:wrap;justify-content:center}
+.dots i{width:6px;height:6px;border-radius:50%;background:var(--line)}
+.dots i.d{background:var(--ok)} .dots i.x{background:var(--bad)}
+h3.tt{margin:20px 0 0;font-size:12px;letter-spacing:.09em;text-transform:uppercase;font-weight:600}
+h3.tt.cold{color:var(--cold)} h3.tt.hot{color:var(--hot)}
+.tablewrap{overflow-x:auto;margin-top:8px;border:1px solid var(--line);border-radius:var(--r);background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+table.wide{min-width:520px}
+th,td{padding:8px 10px;border-top:1px solid var(--line);text-align:left;vertical-align:top}
+thead th{border-top:0;font-size:11.5px;letter-spacing:.04em;color:var(--muted);font-weight:600;background:var(--bg)}
+td.v{font-family:var(--f-num);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+th.c{text-align:right;font-family:var(--f-num)}
+td.v.bad{color:var(--bad);font-weight:700;background:var(--bad-soft)}
+td.v.none{color:var(--muted)}
+td.v.miss{color:var(--bad)}
+tr.sec td{background:var(--bg);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600;padding-block:5px}
+.meta{font-size:12.5px;color:var(--muted);margin-top:10px;display:flex;flex-direction:column;gap:4px}
+.fixlist{margin:6px 0 0;padding-left:18px;font-size:13.5px}
+.fixlist li{margin-bottom:4px}
+.legend{font-size:12.5px;color:var(--muted);margin-top:18px;line-height:1.6}
+.empty{padding:22px 14px;text-align:center;color:var(--muted);font-size:14px}
+@media (prefers-reduced-motion:no-preference){.row{transition:background .15s}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand"><h1>Sanjo Temp Log</h1><span class="date" id="todayLabel">—</span></div>
+    <nav class="tabs">
+      <a href="#today" id="tabToday">Today</a>
+      <a href="#history" id="tabHistory">History</a>
+    </nav>
+    <div class="slotgroups" id="slotBar"></div>
+  </header>
+
+  <main id="viewToday">
+    <div class="banner" id="statusBanner">Connecting to the log…</div>
+    <form id="logForm" novalidate>
+      <div id="groups"></div>
+      <section id="sanitizerBlock">
+        <h2 class="station">Sanitizer</h2>
+        <div class="list">
+          <label class="check" for="sanitizer">
+            <input type="checkbox" id="sanitizer">
+            <span><b>Sanitizer checked with test strip</b><small>Oasis 146 Multi Quat at the kitchen sink dispenser</small></span>
+          </label>
+        </div>
+      </section>
+      <p class="legend" id="legend"></p>
+    </form>
+  </main>
+
+  <main id="viewHistory" hidden>
+    <div class="hnav">
+      <button class="btn ghost" type="button" id="prevWeek" aria-label="Previous week">← Week</button>
+      <input type="date" id="pickDate" aria-label="Pick a date">
+      <button class="btn ghost" type="button" id="nextWeek" aria-label="Next week">Week →</button>
+    </div>
+    <div class="week" id="weekStrip"></div>
+    <div id="dayDetail"></div>
+  </main>
+</div>
+
+<div class="savebar" id="saveBar">
+  <div class="in">
+    <input id="initials" maxlength="4" placeholder="INIT" aria-label="Your initials" autocomplete="off">
+    <input id="pin" type="password" inputmode="numeric" maxlength="8" placeholder="PIN" aria-label="Shop PIN" autocomplete="off">
+    <div class="msg" id="saveMsg">Enter readings, then your initials.</div>
+    <button class="btn" type="button" id="saveBtn" disabled>Save</button>
+  </div>
+</div>
+
+
+<script>
+(() => {
+const TZ = "America/Vancouver";
+// Cold units twice a day; hot holding every 2 hours while it runs (11:30 AM – 8:30 PM).
+const GROUPS = {
+  cold:{label:"Cold", title:"Coolers, freezers & dish machine", note:"Twice a day"},
+  hot: {label:"Hot",  title:"Hot holding", note:"Every 2 hours, 11:30 AM – 8:30 PM"},
+};
+const SLOTS = [
+  {id:"11am",  group:"cold", label:"11 AM",   due:11*60},
+  {id:"8pm",   group:"cold", label:"8 PM",    due:20*60},
+  {id:"h1130", group:"hot",  label:"11:30",   due:11*60+30},
+  {id:"h1330", group:"hot",  label:"1:30",    due:13*60+30},
+  {id:"h1530", group:"hot",  label:"3:30",    due:15*60+30},
+  {id:"h1730", group:"hot",  label:"5:30",    due:17*60+30},
+  {id:"h1930", group:"hot",  label:"7:30",    due:19*60+30},
+];
+const slotById = id => SLOTS.find(s=>s.id===id);
+const slotName = s => s.group==="hot" ? `Hot ${s.label} ${s.due<12*60?"AM":"PM"}` : `Cold ${s.label}`;
+const LIMIT = {
+  cold:  {test:f=>f<=41,  text:"≤ 41°F"},
+  freeze:{test:f=>f<=0,   text:"≤ 0°F"},
+  hot:   {test:f=>f>=140, text:"≥ 140°F"},
+  dish:  {test:f=>f>=180, text:"≥ 180°F"},
+};
+const KIND_LABEL = {cold:"Cooler",freeze:"Freezer",hot:"Hot",dish:"Rinse"};
+const STATIONS = [
+  {id:"pass", name:"Pass", group:"cold", items:[
+    {id:"pass-bev",    name:"Cooler 1 — Drinks",      kind:"cold",   unit:"F"},
+    {id:"pass-frz",    name:"Freezer — Ingredients",  kind:"freeze", unit:"F"},
+    {id:"pass-cool",   name:"Cooler — Ingredients",   kind:"cold",   unit:"F"},
+  ]},
+  {id:"kitchen", name:"Kitchen", group:"cold", items:[
+    {id:"kit-frz",     name:"Short black freezer",    kind:"freeze", unit:"F"},
+    {id:"kit-sand",    name:"Sandwich cooler",        kind:"cold",   unit:"F"},
+  ]},
+  {id:"roll", name:"Roll bar", group:"cold", items:[
+    {id:"roll-sand",   name:"Sandwich cooler",        kind:"cold",   unit:"F"},
+  ]},
+  {id:"sushi", name:"Sushi bar", group:"cold", items:[
+    {id:"sushi-sand",  name:"Sandwich cooler",        kind:"cold",   unit:"F"},
+    {id:"sushi-red",   name:"Red cooler",             kind:"cold",   unit:"F"},
+    {id:"sushi-show",  name:"Showcase",               kind:"cold",   unit:"C"},
+  ]},
+  {id:"dish", name:"Dish machine", group:"cold", items:[
+    {id:"dish-rinse",  name:"Final rinse temp", note:"Stero SUH-1", kind:"dish", unit:"F"},
+  ]},
+  {id:"hot", name:"Hot holding", group:"hot", items:[
+    {id:"hot-front",   name:"Bain-marie — Front",   note:"Probe the food, not the water", kind:"hot", unit:"C"},
+    {id:"hot-kitchen", name:"Bain-marie — Kitchen", note:"Probe the food, not the water", kind:"hot", unit:"C"},
+  ]},
+];
+const ITEMS = STATIONS.flatMap(s => s.items.map(i => ({...i, station:s.name, group:s.group})));
+const itemsFor = group => ITEMS.filter(i => i.group===group);
+const FIX_SUGGEST = ["Re-checked in 30 min","Adjusted thermostat","Moved food to another cooler","Reheated to 165°F","Called repair","Discarded food"];
+const LEGEND = {
+  cold:"Limits: Cooler 41°F (5°C) or below · Freezer 0°F (−18°C) or below · Dish machine final rinse 180°F (82°C) or higher. Tap the unit to switch °F / °C; the log stores °F.",
+  hot:"Limit: Hot-held food 140°F (60°C) or higher. Probe the food in each pan. Tap the unit to switch °F / °C; the log stores °F.",
+};
+
+const $ = id => document.getElementById(id);
+const store = {
+  get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
+  set(k,v){ try{ localStorage.setItem(k,v); }catch(e){} },
+};
+
+/* ---------- time helpers (always Vancouver) ---------- */
+function partsNow(){
+  const p = new Intl.DateTimeFormat("en-CA",{timeZone:TZ,year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}).formatToParts(new Date());
+  const g = t => p.find(x=>x.type===t).value;
+  return {date:`${g("year")}-${g("month")}-${g("day")}`, mins:+g("hour")*60 + +g("minute")};
+}
+// Pick the check closest to now; on a tie the cold check wins.
+function defaultSlot(mins){
+  let best = SLOTS[0], bd = Infinity;
+  for(const s of SLOTS){ const d = Math.abs(mins - s.due); if(d < bd){ bd = d; best = s; } }
+  return best.id;
+}
+function addDays(iso, n){ const d = new Date(iso+"T12:00:00Z"); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); }
+function weekStart(iso){ const d = new Date(iso+"T12:00:00Z"); return addDays(iso, -d.getUTCDay()); }
+function fmtDate(iso, opts){ return new Date(iso+"T12:00:00Z").toLocaleDateString("en-CA",{timeZone:"UTC",...opts}); }
+function fmtTime(isoTs){ try{ return new Date(isoTs).toLocaleTimeString("en-CA",{timeZone:TZ,hour:"numeric",minute:"2-digit"}); }catch(e){ return ""; } }
+const toF = (v,u) => u==="C" ? v*9/5+32 : v;
+const toC = f => (f-32)*5/9;
+const r1 = n => Math.round(n*10)/10;
+
+/* ---------- state ---------- */
+let ready = false;
+const API = "https://script.google.com/macros/s/AKfycbxU5ozMcvimK07Kbm24d-Mv9XU36768TK22jnilZVDQIGsum8rwQpCIcgzFAIMO55_zWw/exec";
+async function call(fn, ...a){
+  let r;
+  if(fn === "api_save"){
+    r = await fetch(API, {method:"POST", headers:{"Content-Type":"text/plain;charset=utf-8"}, body: JSON.stringify({pin:a[0], payload:a[1]})});
+  } else {
+    const q = fn === "api_week" ? `action=week&start=${encodeURIComponent(a[0])}` : "action=today";
+    r = await fetch(`${API}?${q}&t=${Date.now()}`);
+  }
+  const j = await r.json();
+  if(!j.ok) throw new Error(j.error || "ERROR");
+  return j.data;
+}
+const errCode = e => String((e && e.message) || e || "").replace(/^(Exception|Error):\s*/, "").trim().split(/\s/)[0];
+const ERR = {
+  BAD_PIN:"Wrong PIN. Check the PIN and tap Save again.",
+  NOT_TODAY:"The day changed. Reload the page to log today.",
+  NEED_FIX:"Write what you did for each out-of-range unit.",
+  NO_INITIALS:"Add your initials to save.",
+  NO_READINGS:"Enter at least one reading.",
+  NOT_SET_UP:"The log sheet isn’t set up yet. Ask Nikki to run setup.",
+};
+let today = partsNow().date;
+let slot = defaultSlot(partsNow().mins);
+let todayDocs = {};          // slotId -> body
+let units = {};              // item id -> "F" | "C"
+try{ units = JSON.parse(store.get("sanjo-units")||"{}")||{}; }catch(e){ units = {}; }
+let dirty = false;
+const curGroup = () => slotById(slot).group;
+
+/* ---------- build today form ---------- */
+function buildForm(){
+  const g = $("groups"); g.innerHTML = "";
+  for(const s of STATIONS){
+    const sec = document.createElement("section"); sec.id = "st-"+s.id; sec.dataset.group = s.group;
+    const h = document.createElement("h2"); h.className="station"; h.textContent = s.name;
+    const list = document.createElement("div"); list.className="list";
+    for(const it of s.items){
+      const u = units[it.id] || it.unit;
+      const row = document.createElement("div"); row.className="row"; row.id="row-"+it.id;
+      row.innerHTML = `
+        <div class="name"><b>${it.name}</b><small><span class="kind ${it.kind}">${KIND_LABEL[it.kind]} ${LIMIT[it.kind].text}</span>${it.note||""}</small></div>
+        <div class="entry">
+          <input id="in-${it.id}" inputmode="decimal" enterkeyhint="next" autocomplete="off" aria-label="${it.station} ${it.name} temperature">
+          <button type="button" class="unit" id="u-${it.id}" aria-label="Switch unit">°${u}</button>
+        </div>
+        <div class="conv" id="cv-${it.id}"></div>
+        <div class="fix" id="fx-${it.id}" hidden>
+          <label for="fi-${it.id}">Out of range. What did you do?</label>
+          <input id="fi-${it.id}" list="fixList" autocomplete="off" placeholder="e.g. Re-checked in 30 min">
+        </div>`;
+      list.appendChild(row);
+    }
+    sec.append(h, list); g.appendChild(sec);
+  }
+  const dl = document.createElement("datalist"); dl.id="fixList";
+  dl.innerHTML = FIX_SUGGEST.map(s=>`<option value="${s}"></option>`).join("");
+  g.appendChild(dl);
+
+  for(const it of ITEMS){
+    $("in-"+it.id).addEventListener("input", () => { dirty = true; evalRow(it); refreshSave(); });
+    $("fi-"+it.id).addEventListener("input", () => { dirty = true; refreshSave(); });
+    $("u-"+it.id).addEventListener("click", () => {
+      const cur = units[it.id] || it.unit, next = cur==="F" ? "C" : "F";
+      const raw = parseFloat(($("in-"+it.id).value||"").replace(",", ".").replace("−","-"));
+      units[it.id] = next; store.set("sanjo-units", JSON.stringify(units));
+      $("u-"+it.id).textContent = "°"+next;
+      if(!isNaN(raw)){ const f = toF(raw,cur); $("in-"+it.id).value = next==="F" ? r1(f) : r1(toC(f)); }
+      evalRow(it);
+    });
+  }
+  $("sanitizer").addEventListener("change", ()=>{ dirty = true; refreshSave(); });
+}
+function showGroup(){
+  const grp = curGroup();
+  for(const s of STATIONS) $("st-"+s.id).hidden = s.group !== grp;
+  $("sanitizerBlock").hidden = grp !== "cold";
+  $("legend").textContent = LEGEND[grp];
+}
+
+function readingF(it){
+  const raw = ($("in-"+it.id).value||"").trim().replace(",", ".").replace("−","-");
+  if(raw==="") return null;
+  const v = parseFloat(raw); if(isNaN(v)) return NaN;
+  return toF(v, units[it.id] || it.unit);
+}
+function evalRow(it){
+  const row = $("row-"+it.id), f = readingF(it), u = units[it.id] || it.unit;
+  row.classList.remove("bad","good");
+  const cv = $("cv-"+it.id), fx = $("fx-"+it.id);
+  if(f===null){ cv.textContent=""; fx.hidden=true; return; }
+  if(isNaN(f)){ cv.textContent="Numbers only"; fx.hidden=true; return; }
+  const ok = LIMIT[it.kind].test(f);
+  row.classList.add(ok ? "good" : "bad");
+  cv.textContent = (u==="C" ? `= ${r1(f)}°F` : `= ${r1(toC(f))}°C`) + (ok ? "" : `  ·  OUT OF RANGE (${LIMIT[it.kind].text})`);
+  fx.hidden = ok;
+}
+
+function fillFrom(body){
+  dirty = false;
+  for(const it of ITEMS){
+    const rd = body && body.readings && body.readings[it.id];
+    const u = units[it.id] || it.unit;
+    let val = "";
+    if(rd && typeof rd.f === "number"){
+      val = rd.unit === u && typeof rd.value === "number" ? rd.value : (u==="F" ? r1(rd.f) : r1(toC(rd.f)));
+    }
+    $("in-"+it.id).value = val;
+    $("u-"+it.id).textContent = "°"+u;
+    $("fi-"+it.id).value = (body && body.fixes && body.fixes[it.id]) || "";
+    evalRow(it);
+  }
+  $("sanitizer").checked = !!(body && body.sanitizer);
+  showGroup();
+  refreshSave();
+}
+
+/* ---------- slot picker + status ---------- */
+function renderSlots(){
+  const bar = $("slotBar"); bar.innerHTML = "";
+  const now = partsNow();
+  for(const gk of ["cold","hot"]){
+    const slots = SLOTS.filter(s=>s.group===gk);
+    const wrap = document.createElement("div"); wrap.className = "sg "+gk;
+    wrap.innerHTML = `<span>${GROUPS[gk].label}</span>`;
+    const btns = document.createElement("div"); btns.className="btns"; btns.style.setProperty("--n", slots.length);
+    for(const s of slots){
+      const b = document.createElement("button"); b.type="button"; b.className="slot";
+      const doc = todayDocs[s.id];
+      let state = "—";
+      if(doc){ b.classList.add("done"); state = `✓ ${doc.initials||""}`; }
+      else if(now.date===today && now.mins > s.due + (gk==="hot" ? 45 : 90)){ b.classList.add("missed"); state = "Missed"; }
+      if(s.id===slot) b.classList.add("sel");
+      b.innerHTML = `<b>${s.label}</b><small>${state}</small>`;
+      b.setAttribute("aria-pressed", s.id===slot ? "true" : "false");
+      b.setAttribute("aria-label", slotName(s) + (doc ? `, saved by ${doc.initials}` : ""));
+      b.addEventListener("click", ()=>{ if(s.id===slot) return; slot = s.id; fillFrom(todayDocs[slot]); renderSlots(); renderStatus(); });
+      btns.appendChild(b);
+    }
+    wrap.appendChild(btns); bar.appendChild(wrap);
+  }
+}
+function renderStatus(msg, cls){
+  const el = $("statusBanner");
+  el.className = "banner" + (cls ? " "+cls : "");
+  if(msg){ el.textContent = msg; return; }
+  const s = slotById(slot), doc = todayDocs[slot];
+  if(doc){
+    const bad = countBad(doc, s.group);
+    el.className = "banner " + (bad ? "bad" : "ok");
+    el.textContent = `${slotName(s)} saved by ${doc.initials||"?"} at ${fmtTime(doc.savedAt)}` + (bad ? ` · ${bad} out of range` : " · all in range") + ". Change a value and save again to correct it.";
+  } else {
+    el.textContent = `${slotName(s)} check · ${fmtDate(today,{weekday:"long",month:"short",day:"numeric"})}. ${GROUPS[s.group].title}: fill in each unit you measured.`;
+  }
+}
+function countBad(doc, group){
+  let n = 0; for(const it of itemsFor(group)){ const rd = doc.readings && doc.readings[it.id]; if(rd && typeof rd.f==="number" && !LIMIT[it.kind].test(rd.f)) n++; } return n;
+}
+
+/* ---------- save ---------- */
+function collect(){
+  const readings = {}, fixes = {}; let filled = 0, missingFix = 0, invalid = 0;
+  const list = itemsFor(curGroup());
+  for(const it of list){
+    const f = readingF(it);
+    if(f===null) continue;
+    if(isNaN(f)){ invalid++; continue; }
+    const u = units[it.id] || it.unit;
+    const raw = parseFloat(($("in-"+it.id).value).replace(",", ".").replace("−","-"));
+    readings[it.id] = {f:r1(f), value:raw, unit:u};
+    filled++;
+    if(!LIMIT[it.kind].test(f)){
+      const fx = ($("fi-"+it.id).value||"").trim();
+      if(fx) fixes[it.id] = fx; else missingFix++;
+    }
+  }
+  return {readings, fixes, filled, missingFix, invalid, total:list.length};
+}
+function refreshSave(){
+  const c = collect(), ini = ($("initials").value||"").trim();
+  const btn = $("saveBtn"), msg = $("saveMsg");
+  btn.disabled = true;
+  if(!ready){ msg.textContent = "Loading the log…"; return; }
+  if(c.invalid){ msg.textContent = "Fix the entries marked “Numbers only”."; return; }
+  if(!c.filled){ msg.textContent = "Enter at least one reading."; return; }
+  if(c.missingFix){ msg.textContent = `Write what you did for ${c.missingFix} out-of-range unit${c.missingFix>1?"s":""}.`; return; }
+  if(ini.length < 2){ msg.textContent = "Add your initials to save."; return; }
+  if(($("pin").value||"").trim().length < 4){ msg.textContent = "Enter the shop PIN to save."; return; }
+  msg.textContent = `${c.filled} of ${c.total} filled · ${slotName(slotById(slot))}`;
+  btn.disabled = false;
+}
+async function save(){
+  const c = collect(), ini = ($("initials").value||"").trim().toUpperCase();
+  const btn = $("saveBtn"); btn.disabled = true; $("saveMsg").textContent = "Saving…";
+  const s = slotById(slot);
+  const payload = {date:today, slot, readings:c.readings, fixes:c.fixes, initials:ini, sanitizer: s.group==="cold" ? $("sanitizer").checked : false};
+  try{
+    const res = await call("api_save", ($("pin").value||"").trim(), payload);
+    store.set("sanjo-pin", ($("pin").value||"").trim());
+    dirty = false;
+    applyToday(res, true);
+    const saved = todayDocs[slot];
+    $("saveMsg").textContent = `Saved ${saved ? fmtTime(saved.savedAt) : ""} ✓`;
+  }catch(e){
+    const code = errCode(e);
+    if(code==="BAD_PIN"){ $("pin").value = ""; store.set("sanjo-pin",""); }
+    $("saveMsg").textContent = ERR[code] || "Couldn’t save. Check your connection and tap Save again.";
+    btn.disabled = false;
+  }
+}
+
+/* ---------- history ---------- */
+let hDate = today, weekDocs = {}, weekKey = null, weekLoading = false;
+async function subscribeWeek(force){
+  const ws = weekStart(hDate);
+  if(ws===weekKey && !force){ renderHistory(); return; }
+  weekKey = ws; weekDocs = {}; weekLoading = true; renderHistory();
+  try{
+    const res = await call("api_week", ws);
+    if(weekKey !== ws) return;
+    weekDocs = {}; (res.records||[]).forEach(b=>{ weekDocs[`${b.date}_${b.slot}`]=b; });
+    weekLoading = false; renderHistory();
+  }catch(e){
+    weekLoading = false; weekKey = null;
+    $("dayDetail").innerHTML = `<div class="banner bad" style="margin-top:14px">History couldn’t load. Check the connection and tap the day again.</div>`;
+  }
+}
+function isMissed(d, s){
+  if(d < today) return true;
+  if(d > today) return false;
+  return partsNow().mins > s.due + (s.group==="hot" ? 45 : 90);
+}
+function groupTable(group, docsBySlot){
+  const slots = SLOTS.filter(s=>s.group===group);
+  const docs = slots.map(s=>docsBySlot[s.id]);
+  let rows = "";
+  for(const st of STATIONS.filter(x=>x.group===group)){
+    if(group==="cold") rows += `<tr class="sec"><td colspan="${slots.length+1}">${st.name}</td></tr>`;
+    for(const it of st.items){
+      rows += `<tr><td>${it.name}<br><small style="color:var(--muted)">${LIMIT[it.kind].text}</small></td>` + docs.map((d,i)=>{
+        if(!d) return isMissed(hDate, slots[i]) ? `<td class="v miss">—</td>` : `<td class="v none">—</td>`;
+        const rd = d.readings && d.readings[it.id];
+        if(!rd) return `<td class="v none">·</td>`;
+        const bad = !LIMIT[it.kind].test(rd.f);
+        const shown = rd.unit==="C" ? `${rd.value}°C` : `${rd.f}°F`;
+        return `<td class="v${bad?" bad":""}">${shown}</td>`;
+      }).join("") + `</tr>`;
+    }
+  }
+  if(group==="cold") rows += `<tr class="sec"><td colspan="${slots.length+1}">Sanitizer</td></tr><tr><td>Test strip checked</td>${docs.map(d=>`<td class="v${d?"":" none"}">${d ? (d.sanitizer?"✓":"✗") : "—"}</td>`).join("")}</tr>`;
+  rows += `<tr><td><b>Initials</b></td>${docs.map((d,i)=>`<td class="v">${d ? `<b>${escapeHtml(d.initials||"?")}</b><br><small style="color:var(--muted)">${fmtTime(d.savedAt)}</small>` : (isMissed(hDate, slots[i]) ? `<span style="color:var(--bad)">Missed</span>` : `<span style="color:var(--muted)">—</span>`)}</td>`).join("")}</tr>`;
+  return `<h3 class="tt ${group}">${GROUPS[group].title} · ${GROUPS[group].note}</h3>
+    <div class="tablewrap"><table class="${slots.length>3?"wide":""}">
+      <thead><tr><th>Unit</th>${slots.map(s=>`<th class="c">${s.group==="hot" ? s.label : s.label}</th>`).join("")}</tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+}
+function renderHistory(){
+  $("pickDate").value = hDate; $("pickDate").max = today;
+  const ws = weekStart(hDate), strip = $("weekStrip"); strip.innerHTML = "";
+  for(let i=0;i<7;i++){
+    const d = addDays(ws,i), b = document.createElement("button"); b.type="button"; b.className="day"+(d===hDate?" sel":"");
+    const dots = SLOTS.map(s => weekDocs[`${d}_${s.id}`] ? `<i class="d"></i>` : (isMissed(d,s) ? `<i class="x"></i>` : `<i></i>`)).join("");
+    b.innerHTML = `<small>${fmtDate(d,{weekday:"short"})}</small><b>${fmtDate(d,{day:"numeric"})}</b><span class="dots">${dots}</span>`;
+    b.setAttribute("aria-label", fmtDate(d,{weekday:"long",month:"long",day:"numeric"}));
+    b.disabled = d > today;
+    b.addEventListener("click", ()=>{ hDate = d; renderHistory(); });
+    strip.appendChild(b);
+  }
+  const out = $("dayDetail");
+  const title = fmtDate(hDate,{weekday:"long",year:"numeric",month:"long",day:"numeric"});
+  if(!ready || weekLoading){ out.innerHTML = `<div class="banner" style="margin-top:14px">Loading…</div>`; return; }
+  const bySlot = {}; SLOTS.forEach(s=>{ const d = weekDocs[`${hDate}_${s.id}`]; if(d) bySlot[s.id] = d; });
+  if(!Object.keys(bySlot).length){ out.innerHTML = `<div class="banner" style="margin-top:14px">No checks were saved on ${title}.</div>`; return; }
+  const fixes = [], edits = [];
+  for(const s of SLOTS){ const d = bySlot[s.id]; if(!d) continue;
+    for(const [k,v] of Object.entries(d.fixes||{})){ const it = ITEMS.find(x=>x.id===k); fixes.push(`<li><b>${slotName(s)}</b> · ${it?it.station+", "+it.name:k}: ${escapeHtml(v)}</li>`); }
+    if(d.corrections) edits.push(`${slotName(s)}: corrected ${d.corrections}× (first saved by ${escapeHtml(d.firstBy||"?")} at ${escapeHtml(String(d.firstAt).slice(11))}). Old versions are on the Edits tab.`);
+  }
+  out.innerHTML = `<div class="banner" style="margin-top:14px"><b>${title}</b></div>
+    ${groupTable("cold", bySlot)}
+    ${groupTable("hot", bySlot)}
+    ${fixes.length ? `<div class="banner bad" style="margin-top:14px"><b>Corrective actions</b><ul class="fixlist">${fixes.join("")}</ul></div>` : ""}
+    <div class="meta">${edits.map(e=>`<span>${e}</span>`).join("")}<span>Red dash = check missed. Readings are stored in °F; °C entries show as entered.</span></div>`;
+}
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+/* ---------- routing ---------- */
+function route(){
+  const hist = location.hash.replace("#","")==="history";
+  $("viewToday").hidden = hist; $("viewHistory").hidden = !hist;
+  $("slotBar").hidden = hist; $("saveBar").hidden = hist;
+  $("tabToday").setAttribute("aria-current", hist ? "false" : "page");
+  $("tabHistory").setAttribute("aria-current", hist ? "page" : "false");
+  if(hist) subscribeWeek();
+}
+$("prevWeek").addEventListener("click", ()=>{ hDate = addDays(hDate,-7); subscribeWeek(); });
+$("nextWeek").addEventListener("click", ()=>{ const n = addDays(hDate,7); hDate = n > today ? today : n; subscribeWeek(); });
+$("pickDate").addEventListener("change", e=>{ if(e.target.value){ hDate = e.target.value > today ? today : e.target.value; subscribeWeek(); } });
+window.addEventListener("hashchange", route);
+
+/* ---------- boot ---------- */
+$("todayLabel").textContent = fmtDate(today,{weekday:"short",year:"numeric",month:"short",day:"numeric"});
+buildForm();
+showGroup();
+$("initials").value = store.get("sanjo-initials") || "";
+$("initials").addEventListener("input", e=>{ e.target.value = e.target.value.toUpperCase().replace(/[^A-Z]/g,""); store.set("sanjo-initials", e.target.value); refreshSave(); });
+$("saveBtn").addEventListener("click", save);
+$("logForm").addEventListener("submit", e=>e.preventDefault());
+renderSlots(); renderStatus(); refreshSave(); route();
+
+function applyToday(res, afterSave){
+  if(!res) return;
+  if(res.date && res.date !== today){ today = res.date; hDate = today;
+    $("todayLabel").textContent = fmtDate(today,{weekday:"short",year:"numeric",month:"short",day:"numeric"}); }
+  const next = {}; (res.records||[]).forEach(b=>{ next[b.slot]=b; });
+  const changedCurrent = JSON.stringify(next[slot]||null) !== JSON.stringify(todayDocs[slot]||null);
+  todayDocs = next;
+  if((changedCurrent && !dirty) || afterSave) fillFrom(todayDocs[slot]);
+  renderSlots(); renderStatus(); refreshSave();
+  if(weekKey === weekStart(today)){ Object.values(next).forEach(b=>{ weekDocs[`${b.date}_${b.slot}`]=b; }); if(!$("viewHistory").hidden) renderHistory(); }
+}
+async function loadToday(first){
+  try{
+    const res = await call("api_today");
+    if(first){ slot = defaultSlot(res.mins); }
+    ready = true; applyToday(res);
+    if(first && !$("viewHistory").hidden){ weekKey = null; subscribeWeek(); }
+  }catch(e){
+    const code = errCode(e);
+    renderStatus(ERR[code] || "Couldn’t reach the log. Check the Wi-Fi and reload.", "bad");
+  }
+}
+
+// Refresh every minute so the slot marks and other people's saves stay current.
+setInterval(()=>{
+  const now = partsNow();
+  if(now.date !== today && !dirty){ slot = defaultSlot(now.mins); todayDocs = {}; fillFrom(null); }
+  if(!dirty) loadToday(false); else renderSlots();
+}, 60000);
+
+$("pin").value = store.get("sanjo-pin") || "";
+$("pin").addEventListener("input", e=>{ e.target.value = e.target.value.replace(/\D/g,""); refreshSave(); });
+loadToday(true);
+})();
+</script>
+</body>
+</html>
