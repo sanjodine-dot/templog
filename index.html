@@ -117,6 +117,11 @@ tr.sec td{background:var(--bg);font-size:11px;letter-spacing:.08em;text-transfor
 .meta{font-size:12.5px;color:var(--muted);margin-top:10px;display:flex;flex-direction:column;gap:4px}
 .fixlist{margin:6px 0 0;padding-left:18px;font-size:13.5px}
 .fixlist li{margin-bottom:4px}
+.fixrow{display:flex;flex-direction:column;gap:8px;padding:12px}
+.fixrow label{font-size:12.5px;font-weight:600;color:var(--warn)}
+.fixrow input{width:100%;padding:9px 10px;border:1px solid var(--warn);border-radius:8px;background:var(--surface);color:var(--fg);font:inherit;font-size:14px}
+.fixrow .btn{align-self:flex-start}
+.btn.edit{margin-top:6px;padding:4px 10px;font-size:12px}
 .legend{font-size:12.5px;color:var(--muted);margin-top:18px;line-height:1.6}
 .empty{padding:22px 14px;text-align:center;color:var(--muted);font-size:14px}
 @media (prefers-reduced-motion:no-preference){.row{transition:background .15s}}
@@ -136,6 +141,11 @@ tr.sec td{background:var(--bg);font-size:11px;letter-spacing:.08em;text-transfor
   <main id="viewToday">
     <div class="banner" id="statusBanner">Connecting to the log…</div>
     <form id="logForm" novalidate>
+      <section id="reasonBlock" hidden>
+        <div class="fixrow">
+          <button class="btn ghost" type="button" id="cancelEdit">Cancel correction</button>
+        </div>
+      </section>
       <div id="groups"></div>
       <section id="sanitizerBlock">
         <h2 class="station">Sanitizer</h2>
@@ -276,6 +286,8 @@ const errCode = e => String((e && e.message) || e || "").replace(/^(Exception|Er
 const ERR = {
   BAD_PIN:"Wrong PIN. Check the PIN and tap Save again.",
   NOT_TODAY:"The day changed. Reload the page to log today.",
+  NO_RECORD:"Only saved checks can be corrected. Pick a check that has readings.",
+  NEED_REASON:"Write the reason for the correction.",
   NEED_FIX:"Write what you did for each out-of-range unit.",
   NO_INITIALS:"Add your initials to save.",
   NO_READINGS:"Enter at least one reading.",
@@ -405,6 +417,11 @@ function renderStatus(msg, cls){
   const el = $("statusBanner");
   el.className = "banner" + (cls ? " "+cls : "");
   if(msg){ el.textContent = msg; return; }
+  if(editing){
+    el.className = "banner warn";
+    el.textContent = `Correcting ${fmtDate(editing.date,{weekday:"short",month:"short",day:"numeric"})} · ${slotName(slotById(editing.slot))}. Change the wrong numbers, then Save. The old version stays on the Edits tab.`;
+    return;
+  }
   const s = slotById(slot), doc = todayDocs[slot];
   if(doc){
     const bad = countBad(doc, s.group);
@@ -447,18 +464,23 @@ function refreshSave(){
   if(c.missingFix){ msg.textContent = `Write what you did for ${c.missingFix} out-of-range unit${c.missingFix>1?"s":""}.`; return; }
   if(ini.length < 2){ msg.textContent = "Add your initials to save."; return; }
   if(($("pin").value||"").trim().length < 4){ msg.textContent = "Enter the shop PIN to save."; return; }
-  msg.textContent = `${c.filled} of ${c.total} filled · ${slotName(slotById(slot))}`;
+  msg.textContent = editing ? `Save correction · ${slotName(slotById(slot))}` : `${c.filled} of ${c.total} filled · ${slotName(slotById(slot))}`;
   btn.disabled = false;
 }
 async function save(){
   const c = collect(), ini = ($("initials").value||"").trim().toUpperCase();
   const btn = $("saveBtn"); btn.disabled = true; $("saveMsg").textContent = "Saving…";
   const s = slotById(slot);
-  const payload = {date:today, slot, readings:c.readings, fixes:c.fixes, initials:ini, sanitizer: s.group==="cold" ? $("sanitizer").checked : false};
+  const payload = {date: editing ? editing.date : today, slot, readings:c.readings, fixes:c.fixes, initials:ini, sanitizer: s.group==="cold" ? $("sanitizer").checked : false};
   try{
     const res = await call("api_save", ($("pin").value||"").trim(), payload);
     store.set("sanjo-pin", ($("pin").value||"").trim());
     dirty = false;
+    if(editing){
+      const d = editing.date; endEdit(false);
+      hDate = d; location.hash = "#history"; route(); subscribeWeek(true);
+      return;
+    }
     applyToday(res, true);
     const saved = todayDocs[slot];
     $("saveMsg").textContent = `Saved ${saved ? fmtTime(saved.savedAt) : ""} ✓`;
@@ -509,7 +531,7 @@ function groupTable(group, docsBySlot){
     }
   }
   if(group==="cold") rows += `<tr class="sec"><td colspan="${slots.length+1}">Sanitizer</td></tr><tr><td>Test strip checked</td>${docs.map(d=>`<td class="v${d?"":" none"}">${d ? (d.sanitizer?"✓":"✗") : "—"}</td>`).join("")}</tr>`;
-  rows += `<tr><td><b>Initials</b></td>${docs.map((d,i)=>`<td class="v">${d ? `<b>${escapeHtml(d.initials||"?")}</b><br><small style="color:var(--muted)">${fmtTime(d.savedAt)}</small>` : (isMissed(hDate, slots[i]) ? `<span style="color:var(--bad)">Missed</span>` : `<span style="color:var(--muted)">—</span>`)}</td>`).join("")}</tr>`;
+  rows += `<tr><td><b>Initials</b></td>${docs.map((d,i)=>`<td class="v">${d ? `<b>${escapeHtml(d.initials||"?")}</b><br><small style="color:var(--muted)">${fmtTime(d.savedAt)}</small><br><button type="button" class="btn ghost edit" data-edit="${slots[i].id}">Edit</button>` :(isMissed(hDate, slots[i]) ? `<span style="color:var(--bad)">Missed</span>` : `<span style="color:var(--muted)">—</span>`)}</td>`).join("")}</tr>`;
   return `<h3 class="tt ${group}">${GROUPS[group].title} · ${GROUPS[group].note}</h3>
     <div class="tablewrap"><table class="${slots.length>3?"wide":""}">
       <thead><tr><th>Unit</th>${slots.map(s=>`<th class="c">${s.group==="hot" ? s.label : s.label}</th>`).join("")}</tr></thead>
@@ -546,10 +568,25 @@ function renderHistory(){
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
 /* ---------- routing ---------- */
+let editing = null;   // {date, slot} while correcting a saved check
+function startEdit(slotId){
+  const doc = weekDocs[`${hDate}_${slotId}`]; if(!doc) return;
+  editing = {date:hDate, slot:slotId};
+  slot = slotId; $("reasonBlock").hidden = false;
+  location.hash = "#today"; route();
+  fillFrom(doc); renderStatus(); window.scrollTo(0,0);
+}
+function endEdit(rerender){
+  editing = null; $("reasonBlock").hidden = true; dirty = false;
+  if(rerender){ slot = defaultSlot(partsNow().mins); fillFrom(todayDocs[slot]); renderSlots(); renderStatus(); }
+}
+$("dayDetail").addEventListener("click", e=>{ const b = e.target.closest("[data-edit]"); if(b) startEdit(b.dataset.edit); });
+$("cancelEdit").addEventListener("click", ()=>{ const d = editing && editing.date; endEdit(true); if(d){ hDate = d; location.hash = "#history"; route(); } });
 function route(){
   const hist = location.hash.replace("#","")==="history";
+  if(hist && editing) endEdit(true);
   $("viewToday").hidden = hist; $("viewHistory").hidden = !hist;
-  $("slotBar").hidden = hist; $("saveBar").hidden = hist;
+  $("slotBar").hidden = hist || !!editing; $("saveBar").hidden = hist;
   $("tabToday").setAttribute("aria-current", hist ? "false" : "page");
   $("tabHistory").setAttribute("aria-current", hist ? "page" : "false");
   if(hist) subscribeWeek();
@@ -576,6 +613,7 @@ function applyToday(res, afterSave){
   const next = {}; (res.records||[]).forEach(b=>{ next[b.slot]=b; });
   const changedCurrent = JSON.stringify(next[slot]||null) !== JSON.stringify(todayDocs[slot]||null);
   todayDocs = next;
+  if(editing){ renderSlots(); return; }
   if((changedCurrent && !dirty) || afterSave) fillFrom(todayDocs[slot]);
   renderSlots(); renderStatus(); refreshSave();
   if(weekKey === weekStart(today)){ Object.values(next).forEach(b=>{ weekDocs[`${b.date}_${b.slot}`]=b; }); if(!$("viewHistory").hidden) renderHistory(); }
@@ -595,6 +633,7 @@ async function loadToday(first){
 // Refresh every minute so the slot marks and other people's saves stay current.
 setInterval(()=>{
   const now = partsNow();
+  if(editing) return;
   if(now.date !== today && !dirty){ slot = defaultSlot(now.mins); todayDocs = {}; fillFrom(null); }
   if(!dirty) loadToday(false); else renderSlots();
 }, 60000);
